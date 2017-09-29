@@ -1,0 +1,204 @@
+From 63f9f88b4b48a0f27fbcabf651d6df0f89a549d7 Mon Sep 17 00:00:00 2001
+From: wanglianguo <wanglianguo@loongson.cn>
+Date: Thu, 7 Sep 2017 16:15:15 +0800
+Subject: [PATCH] add var tmp support
+
+---
+ src/vte.c            |  18 ++++++++
+ src/vte.h            |   4 ++
+ src/vtestream-file.h | 121 ++++++++++++++++++++++++++++++++++++++++++++++++++-
+ 3 files changed, 141 insertions(+), 2 deletions(-)
+
+diff --git a/src/vte.c b/src/vte.c
+index c9dea4a..3b31ad9 100644
+--- a/src/vte.c
++++ b/src/vte.c
+@@ -15077,6 +15077,24 @@ update_timeout (gpointer data)
+ 	return FALSE;
+ }
+ 
++/*
++ *var_button 0 use tmp , 1 is use var tmp
++ */
++extern int var_button ;
++int vte_terminal_get_var_button()
++{
++	return var_button;
++}
++void vte_terminal_use_var_tmp()
++{
++	var_button = 1 ;
++}
++void vte_terminal_use_tmp()
++{
++	var_button = 0 ;
++}
++
++
+ /**
+  * vte_terminal_write_contents:
+  * @terminal: a #VteTerminal
+diff --git a/src/vte.h b/src/vte.h
+index 4e514a1..369bf78 100644
+--- a/src/vte.h
++++ b/src/vte.h
+@@ -513,6 +513,10 @@ typedef enum {
+   VTE_TERMINAL_WRITE_DEFAULT = 0
+ } VteTerminalWriteFlags;
+ 
++int  vte_terminal_get_var_button() ;
++void vte_terminal_use_var_tmp() ;
++void vte_terminal_use_tmp() ;
++
+ gboolean vte_terminal_write_contents (VteTerminal *terminal,
+ 				      GOutputStream *stream,
+ 				      VteTerminalWriteFlags flags,
+diff --git a/src/vtestream-file.h b/src/vtestream-file.h
+index bc92d6f..9f855e5 100644
+--- a/src/vtestream-file.h
++++ b/src/vtestream-file.h
+@@ -24,6 +24,100 @@
+ 
+ #include <gio/gunixinputstream.h>
+ 
++#include<fcntl.h>
++
++int var_button = 0 ;
++
++int
++var_g_open (const gchar *filename,
++        int          flags,
++        int          mode)
++{
++  int fd;
++  do
++    fd = open (filename, flags, mode);
++  while (G_UNLIKELY (fd == -1 && errno == EINTR));
++  return fd;
++}
++
++static gint
++var_open_file (gchar            *tmpl,
++              int               flags,
++              int               mode)
++{
++  char *XXXXXX;
++  int count, fd;
++  static const char letters[] =
++    "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
++  static const int NLETTERS = sizeof (letters) - 1;
++  glong value;
++  GTimeVal tv;
++  static int counter = 0;
++
++  g_return_val_if_fail (tmpl != NULL, -1); 
++
++  XXXXXX = g_strrstr (tmpl, "XXXXXX");
++
++  if (!XXXXXX || strncmp (XXXXXX, "XXXXXX", 6))
++    {
++      errno = EINVAL;
++      return -1;
++    }
++
++  g_get_current_time (&tv);
++  value = (tv.tv_usec ^ tv.tv_sec) + counter++;
++
++  for (count = 0; count < 100; value += 7777, ++count)
++    {
++      glong v = value;
++
++      XXXXXX[0] = letters[v % NLETTERS];
++      v /= NLETTERS;
++      XXXXXX[1] = letters[v % NLETTERS];
++      v /= NLETTERS;
++      XXXXXX[2] = letters[v % NLETTERS];
++      v /= NLETTERS;
++      XXXXXX[3] = letters[v % NLETTERS];
++      v /= NLETTERS;
++      XXXXXX[4] = letters[v % NLETTERS];
++      v /= NLETTERS;
++      XXXXXX[5] = letters[v % NLETTERS];
++      fd = var_g_open (tmpl, flags, mode);
++
++      if (fd >= 0)
++        return fd;
++      else if (errno != EEXIST)
++        return -1;
++    }
++
++  errno = EEXIST;
++  return -1;
++}
++
++gint
++g_file_open_var_tmp (const gchar  *tmpl,
++                 gchar       **name_used,
++                 GError      **error)
++{
++  gchar *fulltemplate;
++  gint result;
++  char *tmpdir;
++  
++  tmpdir = "/var/tmp/" ;
++
++  fulltemplate = g_strconcat (tmpdir, tmpl, NULL);
++  result = var_open_file ( fulltemplate , 0x0502 , 0600 );
++  if (result != -1)
++    {
++      if (name_used) 
++        *name_used = fulltemplate;
++      else
++        g_free (fulltemplate);
++    }
++  
++  return result;
++}
++
+ static gsize
+ _xread (int fd, char *data, gsize len)
+ {
+@@ -161,6 +255,26 @@ _vte_file_stream_ensure_fd0 (VteFileStream *stream)
+ 	close (fd);
+ }
+ 
++
++static inline void
++_vte_file_stream_ensure_fd0_var (VteFileStream *stream)
++{
++	gint fd;
++	gchar *file_name;
++	if (G_LIKELY (stream->fd[0]))
++		return;
++
++	fd = g_file_open_var_tmp ("vteXXXXXX", &file_name, NULL);
++	if (fd != -1) {
++		unlink (file_name);
++		g_free (file_name);
++	}
++
++	stream->fd[0] = dup (fd); /* we do the dup to make sure ->fd[0] is not 0 */
++
++	close (fd);
++}
++
+ static void
+ _vte_file_stream_reset (VteStream *astream, gsize offset)
+ {
+@@ -177,8 +291,11 @@ _vte_file_stream_append (VteStream *astream, const char *data, gsize len)
+ {
+ 	VteFileStream *stream = (VteFileStream *) astream;
+ 	gsize ret;
+-
+-	_vte_file_stream_ensure_fd0 (stream);
++	
++	if(var_button == 0)
++		_vte_file_stream_ensure_fd0 (stream);
++	else 
++		_vte_file_stream_ensure_fd0_var (stream);
+ 
+ 	ret = lseek (stream->fd[0], 0, SEEK_END);
+ 	_xwrite (stream->fd[0], data, len);
+-- 
+2.1.0
+

@@ -4,7 +4,7 @@
 
 Name: vte
 Version: 0.28.2
-Release: 14%{?dist}
+Release: 15%{?dist}
 Summary: A terminal emulator
 License: LGPLv2+
 Group: User Interface/X
@@ -28,6 +28,9 @@ Patch4: vte-0.28.2-control.patch
 # Fix mc paste
 # https://bugzilla.redhat.com/show_bug.cgi?id=1114301
 Patch5: vte-0.28.2-paste-fix.diff
+# add var tmp support
+# wanglianguo@loongson.cn
+Patch6: vte-add-var-tmp-support
 
 BuildRequires: gtk2-devel >= %{gtk2_version}
 BuildRequires: pango-devel >= %{pango_version}
@@ -69,6 +72,7 @@ vte.
 %patch3 -p1
 %patch4 -p1
 %patch5 -p1
+%patch6 -p1
 
 %build
 PYTHON=%{_bindir}/python`%{__python} -c "import sys ; print sys.version[:3]"`
@@ -124,6 +128,9 @@ rm -f $RPM_BUILD_ROOT/%{_libdir}/python*/site-packages/gtk-2.0/*.a
 %doc %{_datadir}/gtk-doc/html/vte-0.0
 
 %changelog
+* Thu Sep 7 2017  add var tmp support - 0.28.2-15
+- wanglianguo@loongson.cn
+
 * Mon Aug 18 2014 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 0.28.2-14
 - Rebuilt for https://fedoraproject.org/wiki/Fedora_21_22_Mass_Rebuild
 
